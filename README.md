@@ -1,5 +1,7 @@
 # DevOps QLoRA Fine-Tuning Pipeline Instructions
 
+**Repository**: [github.com/Jalpan04/devops-qlora-pipeline](https://github.com/Jalpan04/devops-qlora-pipeline)
+
 Follow these exact steps to set up the environment, generate datasets, train the model, and convert the output to GGUF format on your 16GB VRAM PC.
 
 ---
