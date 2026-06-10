@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local API keys and logs
+*.txt
+*.json
+*.log
+.processing_progress.json
+
+# Exclude raw, clean, and processed datasets (too large for GitHub)
+01_raw_data/
+02_clean_data/
+03_ready_for_qlora/
+
+# Model training checkpoints and adapter outputs
+outputs/
+logs/
+checkpoint-*/
