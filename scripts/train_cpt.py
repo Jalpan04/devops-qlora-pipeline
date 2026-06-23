@@ -17,11 +17,12 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # 1. Logging Setup
+os.makedirs("outputs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("outputs/cpt_training.log", mode="w", encoding="utf-8"),
+        logging.FileHandler(os.path.join("outputs", "cpt_training.log"), mode="w", encoding="utf-8"),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -50,13 +51,23 @@ class VRAMLoggingCallback(TrainerCallback):
 def main():
     parser = argparse.ArgumentParser(description="QLoRA Continued Pre-Training (CPT) pipeline.")
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Coder-7B", help="Hugging Face model identifier.")
-    parser.add_argument("--dataset_path", type=str, default="03_ready_for_qlora/pretraining_clean.txt", help="Path to raw pretraining text dataset.")
+    parser.add_argument("--dataset_path", type=str, default="data/pretraining_clean.txt", help="Path to raw pretraining text dataset.")
     parser.add_argument("--output_dir", type=str, default="outputs/cpt_qlora_adapter", help="Directory to save the trained adapter.")
     parser.add_argument("--dry_run", action="store_true", help="Perform a quick 3-step training test to verify pipeline compatibility.")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size per device.")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Number of gradient accumulation steps.")
+    parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate.")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs.")
+    parser.add_argument("--block_size", type=int, default=1024, help="Sequence block length.")
+    parser.add_argument("--lora_r", type=int, default=16, help="LoRA rank.")
+    parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha.")
+    parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout rate.")
+    parser.add_argument("--max_steps", type=int, default=-1, help="Maximum number of training steps (overrides epochs).")
+    parser.add_argument("--save_steps", type=int, default=100, help="Save checkpoint every X steps.")
+    parser.add_argument("--logging_steps", type=int, default=10, help="Log metrics every X steps.")
     args = parser.parse_args()
 
     overall_start = time.time()
-    os.makedirs("outputs", exist_ok=True)
     
     if args.dry_run:
         logging.info("!!! DRY-RUN MODE ENABLED (Will only train for 3 steps to test environment) !!!")
@@ -84,7 +95,7 @@ def main():
     def tokenize_function(examples):
         return tokenizer(examples["text"])
 
-    block_size = 1024  # Sequence block length
+    block_size = args.block_size  # Sequence block length
     logging.info("Tokenizing text content (with progress bars)...")
     tokenized_dataset = dataset.map(
         tokenize_function,
@@ -95,19 +106,13 @@ def main():
     )
 
     def group_texts(examples):
-        concatenated_ids = []
-        for ids in examples["input_ids"]:
-            concatenated_ids.extend(ids)
-        
-        total_length = len(concatenated_ids)
+        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
         if total_length >= block_size:
             total_length = (total_length // block_size) * block_size
-        
         result = {
-            "input_ids": [
-                concatenated_ids[i : i + block_size]
-                for i in range(0, total_length, block_size)
-            ]
+            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
+            for k, t in concatenated_examples.items()
         }
         result["labels"] = result["input_ids"].copy()
         return result
@@ -158,9 +163,9 @@ def main():
     model = prepare_model_for_kbit_training(model)
 
     # 5. Apply LoRA Config
-    lora_r = 16
-    lora_alpha = 32
-    lora_dropout = 0.05
+    lora_r = args.lora_r
+    lora_alpha = args.lora_alpha
+    lora_dropout = args.lora_dropout
     target_modules = [
         "q_proj", "k_proj", "v_proj", "o_proj", 
         "gate_proj", "up_proj", "down_proj"
@@ -192,13 +197,13 @@ def main():
         logging.info("Ampere/newer GPU detected. Enabling TensorFloat-32 (TF32) for fast QLoRA training.")
     
     # Hyperparameters
-    batch_size = 2
-    gradient_accumulation_steps = 4
-    learning_rate = 2e-4
-    epochs = 1
-    logging_steps = 1 if args.dry_run else 10
-    save_steps = 99999 if args.dry_run else 100
-    max_steps = 3 if args.dry_run else -1
+    batch_size = args.batch_size
+    gradient_accumulation_steps = args.gradient_accumulation_steps
+    learning_rate = args.learning_rate
+    epochs = args.epochs
+    logging_steps = 1 if args.dry_run else args.logging_steps
+    save_steps = 99999 if args.dry_run else args.save_steps
+    max_steps = 3 if args.dry_run else args.max_steps
     
     training_args = TrainingArguments(
         output_dir=args.output_dir,
